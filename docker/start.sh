@@ -1,14 +1,51 @@
 #!/usr/bin/env bash
 # Point ComfyUI at the persistent volume without touching the image's own
 # directories (the baked custom_nodes stay intact; no rm -rf + symlink dance).
+#
+# RunPod-aware (detected via RUNPOD_POD_ID):
+#   - CORS limited to the pod's proxy origin, so API/websocket calls coming
+#     through the proxy are not rejected by ComfyUI's host/origin check (403).
+#   - The container stays alive if ComfyUI crashes, so it can be debugged.
 set -euo pipefail
 
 DATA="${COMFY_DATA_DIR:-/workspace}"
+PORT="${COMFY_PORT:-8188}"
+ARGS_FILE="$DATA/comfyui_args.txt"
 mkdir -p "$DATA"/{models,input,output,user,temp,custom_nodes}
 
+log() { echo "[start] $*"; }
+
+# --- sshd (only when PUBLIC_KEY is set) --------------------------------------
+# Key-only root login. Host keys live on the volume so the fingerprint survives
+# pod restarts instead of triggering "host key changed" warnings.
+start_sshd() {
+  [[ -n "${PUBLIC_KEY:-}" ]] || return 0
+  local keys="$DATA/.ssh-host-keys"
+  mkdir -p "$keys" /root/.ssh /run/sshd
+  chmod 700 "$keys" /root/.ssh
+  for type in ed25519 rsa; do
+    [[ -f "$keys/ssh_host_${type}_key" ]] || ssh-keygen -q -t "$type" -N "" -f "$keys/ssh_host_${type}_key"
+  done
+  cat > /etc/ssh/sshd_config.d/runtime.conf <<CONF
+HostKey $keys/ssh_host_ed25519_key
+HostKey $keys/ssh_host_rsa_key
+PermitRootLogin prohibit-password
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitUserEnvironment yes
+CONF
+  printf '%s\n' "$PUBLIC_KEY" > /root/.ssh/authorized_keys
+  # SSH sessions (interactive or `ssh host cmd`) don't inherit the container
+  # env; sshd applies ~/.ssh/environment to every session.
+  printenv | grep -E '^(PATH|VIRTUAL_ENV|COMFY_|RUNPOD_|NVIDIA_)' > /root/.ssh/environment
+  chmod 600 /root/.ssh/authorized_keys /root/.ssh/environment
+  /usr/sbin/sshd && log "sshd started (key auth only)"
+}
+
+# --- ComfyUI arguments --------------------------------------------------------
 args=(
   --listen 0.0.0.0
-  --port "${COMFY_PORT:-8188}"
+  --port "$PORT"
   --disable-auto-launch
   --models-directory "$DATA/models"
   --input-directory "$DATA/input"
@@ -16,6 +53,17 @@ args=(
   --user-directory "$DATA/user"
   --temp-directory "$DATA/temp"
 )
+
+# COMFY_CORS_ORIGIN: explicit origin, "*" for any, or "off". Default: the pod's
+# RunPod proxy origin when running on RunPod, otherwise off.
+cors="${COMFY_CORS_ORIGIN:-}"
+if [[ -z "$cors" && -n "${RUNPOD_POD_ID:-}" ]]; then
+  cors="https://${RUNPOD_POD_ID}-${PORT}.proxy.runpod.net"
+fi
+if [[ -n "$cors" && "$cors" != "off" ]]; then
+  args+=(--enable-cors-header "$cors")
+  log "CORS origin: $cors"
+fi
 
 # Nodes living on the volume are opt-in: their pip deps are NOT in this image,
 # so loading them silently breaks reproducibility. Bake them via nodes.lock.yaml.
@@ -26,12 +74,53 @@ volume:
   custom_nodes: custom_nodes/
 YAML
   args+=(--extra-model-paths-config /tmp/extra_model_paths.yaml)
-  echo "[start] WARNING: loading custom nodes from $DATA/custom_nodes (not reproducible)"
+  log "WARNING: loading custom nodes from $DATA/custom_nodes (not reproducible)"
 fi
 
 [[ "${COMFY_ENABLE_MANAGER:-0}" == "1" ]] && args+=(--enable-manager)
 
-echo "[start] ComfyUI $(grep -m1 -oE '[0-9]+\.[0-9]+\.[0-9]+' "$COMFY_HOME/comfyui_version.py" 2>/dev/null || echo '?') data=$DATA"
-# COMFY_EXTRA_ARGS e.g. "--lowvram" on the 8 GB box, "--highvram" on a 48 GB pod.
-# shellcheck disable=SC2086
-exec python "$COMFY_HOME/main.py" "${args[@]}" ${COMFY_EXTRA_ARGS:-} "$@"
+# Extra flags, editable on the volume without redeploying: one or more per
+# line, "#" starts a comment. COMFY_EXTRA_ARGS is appended after the file.
+if [[ ! -f "$ARGS_FILE" ]]; then
+  printf '%s\n' "# Extra ComfyUI arguments, e.g. --lowvram or --preview-method auto." \
+    "# Read at every container start. Lines starting with # are ignored." > "$ARGS_FILE"
+fi
+while read -r word; do
+  [[ -n "$word" ]] && args+=("$word")
+done < <(grep -v '^[[:space:]]*#' "$ARGS_FILE" | tr -s '[:space:]' '\n')
+# shellcheck disable=SC2206  # word splitting of COMFY_EXTRA_ARGS is intended
+args+=(${COMFY_EXTRA_ARGS:-} "$@")
+
+start_sshd
+
+# --- Run ComfyUI --------------------------------------------------------------
+log "ComfyUI $(grep -m1 -oE '[0-9]+\.[0-9]+\.[0-9]+' "$COMFY_HOME/comfyui_version.py" 2>/dev/null || echo '?') data=$DATA"
+log "args: ${args[*]}"
+
+python "$COMFY_HOME/main.py" "${args[@]}" &
+comfy_pid=$!
+
+# A stop/restart sends SIGTERM (tini forwards it here): stop ComfyUI and exit
+# cleanly, and don't mistake it for a crash.
+shutting_down=0
+trap 'shutting_down=1; kill -TERM "$comfy_pid" 2>/dev/null || true; [[ -n "${sleep_pid:-}" ]] && kill "$sleep_pid" 2>/dev/null || true' TERM INT
+
+exit_code=0
+wait "$comfy_pid" || exit_code=$?
+[[ "$shutting_down" == "1" ]] && { log "shutting down"; exit 0; }
+
+# Keep the container alive after a crash so it can be debugged (default on
+# RunPod, where an exiting container is restarted in a loop).
+keepalive="${COMFY_KEEPALIVE_ON_CRASH:-$([[ -n "${RUNPOD_POD_ID:-}" ]] && echo 1 || echo 0)}"
+if [[ "$keepalive" != "1" ]]; then
+  exit "$exit_code"
+fi
+log "============================================================"
+log " ComfyUI exited unexpectedly (exit code $exit_code). See the log above."
+log " Container kept alive for debugging (web terminal or SSH). Restart with:"
+log "   python $COMFY_HOME/main.py ${args[*]}"
+log "============================================================"
+sleep infinity &
+sleep_pid=$!
+wait "$sleep_pid" || true
+exit 0
