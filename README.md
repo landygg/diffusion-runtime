@@ -36,6 +36,23 @@ For reproducible pipelines, pin by digest (`ghcr.io/landygg/diffusion-runtime@sh
 | `COMFY_EXTRA_ARGS` | — | Extra flags (`--lowvram`, `--highvram`, …) |
 | `COMFY_ENABLE_MANAGER` | `0` | `1` adds `--enable-manager` |
 | `COMFY_ALLOW_VOLUME_NODES` | `0` | `1` also loads `custom_nodes/` from the volume (not reproducible) |
+| `COMFY_CORS_ORIGIN` | RunPod: `https://<pod>-<port>.proxy.runpod.net`; else off | Value for `--enable-cors-header` (`*` = any origin, `off` = disabled) |
+| `COMFY_KEEPALIVE_ON_CRASH` | RunPod: `1`; else `0` | `1` keeps the container alive if ComfyUI exits, for debugging |
+| `PUBLIC_KEY` | — | Starts sshd with key-only root login (host keys persist in `/workspace/.ssh-host-keys`) |
+
+Extra ComfyUI flags can also go in `/workspace/comfyui_args.txt` (created on first start, read at every start), so they change without redeploying.
+
+### RunPod template
+
+| Setting | Value |
+|---|---|
+| Container image | `ghcr.io/landygg/diffusion-runtime:stable` (or a digest) |
+| Expose HTTP ports | `8188` |
+| Expose TCP ports | `22` (only if you use `PUBLIC_KEY`) |
+| Volume mount path | `/workspace` (Network Volume recommended) |
+| Environment | `PUBLIC_KEY` (optional); `COMFY_EXTRA_ARGS` (optional) |
+
+Behind RunPod's proxy, ComfyUI rejects API and websocket calls with 403 unless CORS is enabled (the proxy's host and origin differ). The image enables it automatically for the pod's own proxy origin.
 
 ## Policy files (everything is defined in the repo)
 

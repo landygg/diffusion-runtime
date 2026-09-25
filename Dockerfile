@@ -29,10 +29,13 @@ ENV DEBIAN_FRONTEND=noninteractive \
     COMFY_PORT=8188
 
 # 1. OS packages. ffmpeg CLI is used by video nodes (VideoHelperSuite);
-#    libgl/libglib are needed by opencv-based nodes.
+#    libgl/libglib are needed by opencv-based nodes; openssh-server backs the
+#    optional SSH access (started only when PUBLIC_KEY is set). The packaged
+#    host keys are removed so no two containers share them; start.sh creates
+#    per-volume keys.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        git ffmpeg libgl1 libglib2.0-0 ca-certificates curl tini \
-    && rm -rf /var/lib/apt/lists/*
+        git ffmpeg libgl1 libglib2.0-0 ca-certificates curl tini openssh-server \
+    && rm -rf /var/lib/apt/lists/* /etc/ssh/ssh_host_*
 
 # COPY --from does not expand ARGs; bump this tag by hand.
 COPY --from=ghcr.io/astral-sh/uv:0.12.19 /uv /usr/local/bin/uv
@@ -85,7 +88,7 @@ LABEL org.opencontainers.image.title="diffusion-runtime" \
       dev.landygg.runtime.torch="${TORCH_VERSION}+${CUDA_TAG}" \
       dev.landygg.runtime.recipe="${RECIPE_HASH}"
 
-EXPOSE 8188
+EXPOSE 8188 22
 WORKDIR /opt/ComfyUI
 HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 \
     CMD curl -fsS "http://127.0.0.1:${COMFY_PORT}/system_stats" > /dev/null || exit 1
