@@ -1,5 +1,7 @@
 # Moves the `stable` channel to an image that has been validated on a real GPU
 # (e.g. a reference render on a real GPU). `latest` is automatic; `stable` never is.
+# Promoting to `stable` also publishes a GitHub Release for that image, marked
+# Latest for the default variant, so the repo sidebar always shows what `stable` is.
 name: promote
 
 on:
@@ -20,6 +22,10 @@ jobs:
     permissions:
       contents: read
       packages: write
+    outputs:
+      digest: ${{ steps.move.outputs.digest }}
+      revision: ${{ steps.move.outputs.revision }}
+      default: ${{ steps.move.outputs.default }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
@@ -28,15 +34,87 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - env:
+      - id: move
+        env:
           TAG: ${{ inputs.tag }}
           CHANNEL: ${{ inputs.channel }}
         run: |
+          set -euo pipefail
+          [[ "$TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+-cu[0-9]+-r[0-9a-f]{8}$ ]] || { echo "not an immutable tag: $TAG"; exit 1; }
           image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/diffusion-runtime"
           variant=$(cut -d- -f2 <<<"$TAG")
+          default=$(jq -r --arg v "$variant" '.[] | select(.variant==$v) | .default' variants.json)
           tags=(-t "$image:$CHANNEL-$variant")
-          if [[ "$(jq -r --arg v "$variant" '.[] | select(.variant==$v) | .default' variants.json)" == "true" ]]; then
+          if [[ "$default" == "true" ]]; then
             tags+=(-t "$image:$CHANNEL")
           fi
           docker buildx imagetools create "${tags[@]}" "$image:$TAG"
           echo "$CHANNEL -> $TAG" >> "$GITHUB_STEP_SUMMARY"
+
+          digest=$(docker buildx imagetools inspect "$image:$TAG" --format '{{json .Manifest.Digest}}' | tr -d '"')
+          # Source commit: the image's revision label (images built since it was added),
+          # else this commit if its recipe hashes to the tag's (same inputs, same image).
+          revision=$(docker buildx imagetools inspect "$image:$TAG" --format '{{json .Image}}' \
+            | jq -r 'if has("config") then . else (to_entries[0].value) end
+                     | .config.Labels["org.opencontainers.image.revision"] // empty') || revision=""
+          if [[ -z "$revision" && "$(scripts/recipe_hash.sh "$variant")" == "${TAG##*-r}" ]]; then
+            revision=$GITHUB_SHA
+          fi
+          {
+            echo "digest=$digest"
+            echo "revision=$revision"
+            echo "default=$default"
+          } >> "$GITHUB_OUTPUT"
+
+  release:
+    needs: promote
+    if: inputs.channel == 'stable'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          DIGEST: ${{ needs.promote.outputs.digest }}
+          REVISION: ${{ needs.promote.outputs.revision }}
+          DEFAULT: ${{ needs.promote.outputs.default }}
+        run: |
+          set -euo pipefail
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/diffusion-runtime"
+          comfyui=${TAG%%-*}; variant=$(cut -d- -f2 <<<"$TAG")
+          torch=$(jq -r --arg v "$variant" '.[] | select(.variant==$v) | .torch' variants.json)
+          channel_tag="stable-$variant"; [[ "$DEFAULT" == "true" ]] && channel_tag="stable"
+          latest=$([[ "$DEFAULT" == "true" ]] && echo true || echo false)
+
+          # Promoting an image that already has a release (e.g. a rollback) only
+          # moves the Latest mark back to it.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --latest="$latest"
+            echo "release $TAG already existed; latest=$latest" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if [[ -z "$REVISION" ]]; then
+            echo "::warning::source commit of $TAG unknown (no revision label, recipe differs from $GITHUB_SHA); release not created"
+            exit 0
+          fi
+
+          cat > notes.md <<NOTES
+          Promoted to \`$channel_tag\` after a check on a real GPU.
+
+          | | |
+          |---|---|
+          | ComfyUI | [\`v$comfyui\`](https://github.com/Comfy-Org/ComfyUI/releases/tag/v$comfyui) |
+          | torch | \`$torch+$variant\` |
+          | Image | \`$image:$TAG\` |
+          | Digest | \`$image@$DIGEST\` |
+
+          \`\`\`bash
+          docker pull $image@$DIGEST
+          \`\`\`
+          NOTES
+          # --notes is prepended to the generated notes (PRs merged since the previous release).
+          gh release create "$TAG" --target "$REVISION" --title "$TAG" \
+            --notes "$(cat notes.md)" --generate-notes --latest="$latest"
+          echo "release $TAG created (latest=$latest)" >> "$GITHUB_STEP_SUMMARY"
