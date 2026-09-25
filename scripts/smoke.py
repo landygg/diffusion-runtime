@@ -3,6 +3,7 @@
 1. torch and ComfyUI-Manager import.
 2. ComfyUI boots with --cpu --enable-manager and every custom node imports (no "IMPORT FAILED").
 3. /object_info exposes every class_type listed in required_nodes.txt.
+4. get-model / sync-models are on PATH and models.lock.yaml is valid (offline).
 """
 
 import json
@@ -36,6 +37,14 @@ def check_imports() -> None:
     print("comfyui_manager ok")
 
 
+def check_model_tools() -> None:
+    for cmd in (["get-model", "--help"], ["sync-models", "--help"], [sys.executable, "/opt/comfy/models.py", "check"]):
+        r = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        if r.returncode != 0:
+            fail(f"{' '.join(cmd)} failed: {r.stderr or r.stdout}")
+    print("model tools ok")
+
+
 def object_info() -> dict:
     with urllib.request.urlopen(f"http://127.0.0.1:{PORT}/object_info", timeout=10) as r:
         return json.load(r)
@@ -43,6 +52,7 @@ def object_info() -> dict:
 
 def main() -> None:
     check_imports()
+    check_model_tools()
     required = [
         line.strip()
         for line in REQUIRED.read_text().splitlines()

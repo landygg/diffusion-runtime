@@ -6,6 +6,7 @@
 #   - CORS limited to the pod's proxy origin, so API/websocket calls coming
 #     through the proxy are not rejected by ComfyUI's host/origin check (403).
 #   - The container stays alive if ComfyUI crashes, so it can be debugged.
+#   - Models from models.lock.yaml are synced to the volume in the background.
 set -euo pipefail
 
 DATA="${COMFY_DATA_DIR:-/workspace}"
@@ -49,7 +50,7 @@ CONF
   printf '%s\n' "$PUBLIC_KEY" > /root/.ssh/authorized_keys
   # SSH sessions (interactive or `ssh host cmd`) don't inherit the container
   # env; sshd applies ~/.ssh/environment to every session.
-  printenv | grep -E '^(PATH|VIRTUAL_ENV|COMFY_|RUNPOD_|NVIDIA_)' > /root/.ssh/environment
+  printenv | grep -E '^(PATH|VIRTUAL_ENV|COMFY_|RUNPOD_|NVIDIA_|HF_)' > /root/.ssh/environment
   chmod 600 /root/.ssh/authorized_keys /root/.ssh/environment
   if /usr/sbin/sshd; then log "sshd started (key auth only)"; else log "WARNING: sshd failed to start"; fi
 }
@@ -105,6 +106,22 @@ args+=(${COMFY_EXTRA_ARGS:-} "$@")
 
 # SSH is a convenience: a failure here must never keep ComfyUI from starting.
 start_sshd || log "WARNING: SSH setup failed; continuing without SSH"
+
+# --- Models (models.lock.yaml -> $DATA/models) ---------------------------------
+# COMFY_MODELS_SYNC: "background" (ComfyUI starts at once; press R in the UI once
+# the downloads finish), "wait" (download before ComfyUI starts) or "off".
+# Default: background on RunPod, off elsewhere. COMFY_MODELS_GROUPS narrows it
+# (space/comma separated group names, default all).
+models_sync="${COMFY_MODELS_SYNC:-$([[ -n "${RUNPOD_POD_ID:-}" ]] && echo background || echo off)}"
+model_groups_env="${COMFY_MODELS_GROUPS:-}"
+read -ra model_groups <<< "${model_groups_env//,/ }"
+case "$models_sync" in
+  background) log "syncing models in the background (COMFY_MODELS_SYNC=background)"
+              sync-models "${model_groups[@]}" || log "model sync failed; retry with: sync-models" & ;;
+  wait)       sync-models "${model_groups[@]}" || log "model sync failed; retry with: sync-models" ;;
+  off)        ;;
+  *)          log "WARNING: unknown COMFY_MODELS_SYNC=$models_sync (use background, wait or off)" ;;
+esac
 
 # --- Run ComfyUI --------------------------------------------------------------
 log "ComfyUI $(grep -m1 -oE '[0-9]+\.[0-9]+\.[0-9]+' "$COMFY_HOME/comfyui_version.py" 2>/dev/null || echo '?') data=$DATA"

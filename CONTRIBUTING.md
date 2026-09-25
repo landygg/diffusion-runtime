@@ -11,7 +11,7 @@ Contributions are welcome: new custom nodes, CUDA variants, smoke-test improveme
 ## Recipe rules
 
 - **Custom nodes**: add an entry to `nodes.lock.yaml` with `repo`, `ref` and the **full commit SHA** (never a branch), and add its `class_type` values to `required_nodes.txt`. Say in the PR which workflow needs it.
-- **No models, LoRAs or data** in the image.
+- **No models, LoRAs or data** in the image. Models go in `models.lock.yaml` (downloaded to the volume): `repo`, full-SHA `revision`, `file`, `folder`, `sha256`, `size` — `get-model` prints a ready entry. Say in the PR which workflow needs it.
 - **Don't change the torch version** without a reason: it can change outputs for a fixed seed.
 - Actions pinned by SHA; least-privilege permissions per job; never `pull_request_target`.
 - Don't use third-party trademarks (e.g. "Comfy") in file, image or project names.
