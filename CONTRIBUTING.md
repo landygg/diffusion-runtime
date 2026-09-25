@@ -1,21 +1,22 @@
-# Contribuir
+# Contributing
 
-Las contribuciones son bienvenidas: nuevos custom nodes, variantes CUDA, mejoras del smoke test, documentación.
+Contributions are welcome: new custom nodes, CUDA variants, smoke-test improvements, documentation.
 
-## Flujo
+## Workflow
 
-1. Haz fork y abre un PR contra `main`. Nadie (tampoco el mantenedor) hace push directo a `main`.
-2. El workflow `pr` compila la imagen y ejecuta el smoke test. En PRs desde forks, un mantenedor debe aprobar la ejecución la primera vez (evita abuso de los runners).
-3. Hace falta **1 revisión aprobada del code owner** y el check `smoke` en verde. Se mergea con squash.
+1. Fork the repo and open a PR against `main`. Nobody — the maintainer included — pushes to `main` directly.
+2. The `pr` workflow builds the image and runs the smoke test. For PRs from forks, a maintainer must approve the workflow run (this protects the runners from abuse).
+3. A PR needs **1 approving review from the code owner** and a green `smoke` check. PRs are squash-merged.
 
-## Reglas de la receta
+## Recipe rules
 
-- **Custom nodes**: entrada en `nodes.lock.yaml` con `repo`, `ref` y el **SHA completo** (nunca una rama), y sus `class_type` en `required_nodes.txt`. Explica en el PR qué workflow lo necesita.
-- **Nada de modelos, LoRAs ni datos** dentro de la imagen.
-- **No cambies la versión de torch** sin justificarlo: puede cambiar resultados para una seed fija.
-- Actions fijadas por SHA; permisos mínimos por job; nunca `pull_request_target`.
-- Verifica en local antes del PR (Docker o Apple `container`), ver README.
+- **Custom nodes**: add an entry to `nodes.lock.yaml` with `repo`, `ref` and the **full commit SHA** (never a branch), and add its `class_type` values to `required_nodes.txt`. Say in the PR which workflow needs it.
+- **No models, LoRAs or data** in the image.
+- **Don't change the torch version** without a reason: it can change outputs for a fixed seed.
+- Actions pinned by SHA; least-privilege permissions per job; never `pull_request_target`.
+- Don't use third-party trademarks (e.g. "Comfy") in file, image or project names.
+- Test locally before opening the PR (Docker or Apple `container`); see the README.
 
-## Licencia de las contribuciones
+## License of contributions
 
-Al contribuir aceptas que tu aporte se publique bajo la licencia MIT de este repositorio (inbound = outbound). No añadas código de terceros con licencias incompatibles ni con marcas de otros en nombres de archivos o imágenes.
+By contributing, you agree that your contribution is published under this repository's MIT license (inbound = outbound). Don't add third-party code under incompatible licenses.

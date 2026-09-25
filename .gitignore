@@ -1,2 +1,8 @@
 .DS_Store
 *.log
+
+# Maintainer-only material, kept locally and never published:
+# design notes, and repo-settings tooling that no build or workflow uses.
+docs/ANALYSIS.md
+scripts/apply_repo_settings.sh
+.github/rulesets/

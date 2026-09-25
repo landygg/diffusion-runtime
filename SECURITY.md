@@ -1,4 +1,5 @@
 # Security
 
-Reporta vulnerabilidades por *Security → Report a vulnerability* (aviso privado), no en un issue público.
-La imagen no contiene secretos ni modelos; solo software open source fijado por versión.
+Report vulnerabilities privately via *Security → Report a vulnerability*, not in a public issue.
+
+The image contains no secrets and no models; only open-source software and NVIDIA libraries pinned by version.
