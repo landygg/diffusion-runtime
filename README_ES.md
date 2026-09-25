@@ -19,6 +19,28 @@ locales con NVIDIA Container Toolkit.
 `<comfyui>-<variant>-r<hash>` inmutable · `<comfyui>` · `latest` (auto) · `stable` (manual, workflow **promote**).
 Variantes en `variants.json`: `cu130` (torch 2.14, driver ≥580, default) y `cu128` (torch 2.11, compat).
 
+## Promover una imagen (`stable`) y conservar una (`keep-*`)
+
+`build` publica cada imagen nueva automáticamente, pero `latest` solo garantiza que compila y pasa el smoke test **en CPU**. Los problemas que solo aparecen con GPU (falta de memoria, drivers, kernels de CUDA, un render que cambia) no se detectan ahí. Por eso los templates de producción deben usar **`stable`**, que solo avanza cuando el mantenedor promueve una imagen tras validarla en una GPU real:
+
+1. Busca el tag inmutable de la imagen nueva (p. ej. `0.37.2-cu130-r1a2b3c4d`) en el resumen del run de `build` (*Pin by digest*).
+2. Despliega ese tag exacto en RunPod (o en una GPU local) y haz una generación real.
+3. Si funciona, lanza el workflow `promote` con ese tag. Apunta `stable` y `stable-<variante>` a esa misma imagen, sin recompilar ni volver a subir nada:
+   ```bash
+   gh workflow run promote -R landygg/diffusion-runtime -f tag=0.37.2-cu130-r1a2b3c4d
+   ```
+   O desde *Actions → promote → Run workflow*.
+
+Si una imagen nueva falla en GPU, no la promuevas: `stable` sigue en la anterior. Para volver atrás, promueve otra vez un tag inmutable anterior. Hasta la primera promoción `stable` no existe; mientras tanto usa `latest` o un digest.
+
+**Conservar una imagen:** el workflow `retention` conserva las 5 imágenes inmutables más recientes por variante y borra las anteriores. Para conservar una imagen concreta para siempre (p. ej. el stack exacto con el que se produjo un proyecto), promuévela a un canal llamado `keep-<nombre>` en lugar de `stable`:
+
+```bash
+gh workflow run promote -R landygg/diffusion-runtime -f tag=0.37.2-cu130-r1a2b3c4d -f channel=keep-episode01
+```
+
+Los tags que empiezan por `latest`, `stable`, `keep-` o `buildcache-` nunca se borran (`retention.json`).
+
 ## Uso
 
 ```bash
@@ -88,5 +110,5 @@ MIT para este repositorio. Las imágenes agregan software de terceros con sus pr
 
 1. Tras el primer build: *Packages → diffusion-runtime → Package settings → Change visibility* → público (GitHub no ofrece API para esto).
 2. Instala la [GitHub App de Renovate](https://github.com/apps/renovate) y añádela como excepción (solo vía PR) en el ruleset `main: review`. La protección de ramas y los ajustes de Actions los gestiona el mantenedor fuera de este repo.
-3. Valida cada imagen nueva en una GPU real y lanza el workflow `promote` con su tag inmutable para mover `stable`.
+3. Valida cada imagen nueva en una GPU real y promuévela (ver *Promover una imagen*).
 4. Lanza el workflow `retention` en dry run para revisar qué borraría.
