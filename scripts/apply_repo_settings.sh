@@ -55,12 +55,28 @@ JSON
 fi
 
 echo "-- rulesets"
+apply_ruleset() {  # $1 = name, $2 = json file; prints ok/skip
+  local id
+  id=$(gh api "repos/$REPO/rulesets" --jq ".[] | select(.name == \"$1\") | .id" 2>/dev/null || true)
+  if [[ -n "$id" ]]; then
+    gh api -X PUT "repos/$REPO/rulesets/$id" --input "$2" >/dev/null 2>&1
+  else
+    gh api -X POST "repos/$REPO/rulesets" --input "$2" >/dev/null 2>&1
+  fi
+}
 for f in .github/rulesets/*.json; do
   name=$(jq -r .name "$f")
-  id=$(gh api "repos/$REPO/rulesets" --jq ".[] | select(.name == \"$name\") | .id" 2>/dev/null || true)
-  if [[ -n "$id" ]]; then
-    try "update '$name'" gh api -X PUT "repos/$REPO/rulesets/$id" --input "$f"
+  if apply_ruleset "$name" "$f"; then
+    echo "  ok    ruleset '$name'"
   else
-    try "create '$name'" gh api -X POST "repos/$REPO/rulesets" --input "$f"
+    # An app (Renovate) can only be a bypass actor once it is installed on the repo.
+    tmp=$(mktemp)
+    jq '.bypass_actors |= map(select(.actor_type != "Integration"))' "$f" > "$tmp"
+    if apply_ruleset "$name" "$tmp"; then
+      echo "  ok    ruleset '$name' WITHOUT app bypass (install the app, then re-run)"
+    else
+      echo "  FAIL  ruleset '$name'"; gh api -X POST "repos/$REPO/rulesets" --input "$tmp" 2>&1 | tail -1
+    fi
+    rm -f "$tmp"
   fi
 done
