@@ -1,123 +1,148 @@
 # diffusion-runtime
 
-[English](README.md)
+[![stable](https://img.shields.io/github/v/release/landygg/diffusion-runtime?label=stable&sort=date)](https://github.com/landygg/diffusion-runtime/releases/latest)
+[![build](https://github.com/landygg/diffusion-runtime/actions/workflows/build.yml/badge.svg)](https://github.com/landygg/diffusion-runtime/actions/workflows/build.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Image on GHCR](https://img.shields.io/badge/ghcr.io-diffusion--runtime-2496ED?logo=docker&logoColor=white)](https://github.com/landygg/diffusion-runtime/pkgs/container/diffusion-runtime)
 
-**Unofficial Docker runtime for [ComfyUI](https://github.com/Comfy-Org/ComfyUI).** No afiliado ni respaldado por Comfy Org ni NVIDIA; "ComfyUI" es marca de Comfy Org, Inc.
+[English](README.md) · **Español**
 
-Imagen Docker de ComfyUI (sin modelos) que se reconstruye sola cuando sale una
-nueva versión de ComfyUI o cambia la receta. Pensada para RunPod y para GPUs
-locales con NVIDIA Container Toolkit.
+**Una imagen Docker no oficial de ComfyUI para RunPod y GPUs NVIDIA locales.** Se reconstruye sola con cada versión de ComfyUI, y el tag `stable` solo avanza cuando una imagen se ha comprobado en una GPU real. Los custom nodes y los modelos están fijados en el repo, y la imagen no incluye pesos de modelos.
 
-## Qué hay dentro / fuera
+> Sin afiliación ni respaldo de Comfy Org ni de NVIDIA. "ComfyUI" es una marca de Comfy Org, Inc.; ver [licenses/NOTICE.md](licenses/NOTICE.md).
 
-| Imagen | Volumen (`$COMFY_DATA_DIR`, default `/workspace`) |
+```
+ghcr.io/landygg/diffusion-runtime:stable
+```
+
+## Inicio rápido
+
+**RunPod.** Crea un template de pod con estos ajustes:
+
+| Ajuste | Valor |
 |---|---|
-| ComfyUI (tag fijo), torch + CUDA (wheels), ffmpeg, ComfyUI-Manager (`manager_requirements.txt`), custom nodes de `nodes.lock.yaml` (hoy vacío: Wan 2.2 y Z-Image son core), `get-model` / `sync-models` + la lista de modelos `models.lock.yaml` (sin pesos) | `models/` (lo descarga `sync-models`), `input/`, `output/`, `user/` (workflows, settings), `temp/`, `custom_nodes/` (opt-in) |
+| Container image | `ghcr.io/landygg/diffusion-runtime:stable` (o un digest, ver [Tags](#tags)) |
+| Expose HTTP ports | `8188` |
+| Expose TCP ports | `22` (solo si usas SSH) |
+| Volume mount path | `/workspace` |
+| Environment (opcional) | `COMFY_MODELS_GROUPS`, `HF_TOKEN`, `COMFY_EXTRA_ARGS` |
+
+Abre *Connect → HTTP 8188*. En el primer arranque, los modelos de [`models.lock.yaml`](models.lock.yaml) se descargan al volumen en segundo plano; pulsa **R** en ComfyUI cuando el log muestre `[models] ... ready`.
+
+**GPU local** (driver NVIDIA + [Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/)):
+
+```bash
+docker run --gpus all -p 8188:8188 -v "$PWD/data:/workspace" \
+  -e COMFY_MODELS_SYNC=background ghcr.io/landygg/diffusion-runtime:stable
+```
+
+Luego abre http://localhost:8188. En GPUs pequeñas añade `-e COMFY_EXTRA_ARGS="--lowvram"`.
+
+## Características
+
+- **Sigue las versiones de ComfyUI.** Un tag nuevo upstream dispara un build en unas 6 horas como máximo. Cada imagen pasa un smoke test en CPU antes de publicarse.
+- **Un canal `stable` comprobado en GPU.** `latest` avanza solo; `stable` solo avanza cuando el mantenedor promueve una imagen tras un render real en GPU.
+- **Todo fijado.** El tag de ComfyUI, los wheels de torch/CUDA, los custom nodes (por commit) y los modelos (por commit de Hugging Face + sha256) se definen en este repo.
+- **Modelos en el volumen, no en la imagen.** `sync-models` descarga el conjunto fijado; `get-model` añade cualquier modelo de Hugging Face desde una shell del pod.
+- **Hecha para RunPod.** CORS configurado para el proxy del pod (la API y el websocket funcionan a través de él), SSH solo con clave, el contenedor sigue vivo si ComfyUI se cae, y los flags de ComfyUI se cambian sin redesplegar.
+- **Licencias incluidas.** Cada imagen lleva su inventario de licencias de terceros y las versiones exactas de los paquetes.
+
+## Qué hay dentro
+
+| En la imagen | En el volumen (`$COMFY_DATA_DIR`, por defecto `/workspace`) |
+|---|---|
+| ComfyUI (tag fijo), wheels de torch + CUDA, ffmpeg, ComfyUI-Manager, custom nodes de `nodes.lock.yaml`, las herramientas `get-model` / `sync-models` y el CLI `hf`, un compilador de C para Triton | `models/`, `input/`, `output/`, `user/` (workflows, ajustes), `temp/`, `custom_nodes/` (opcional), caché y token de Hugging Face |
+
+Los workflows de Z-Image Turbo y Wan 2.2 TI2V 5B solo usan nodos core, así que `nodes.lock.yaml` está vacío por ahora.
 
 ## Tags
 
-`<comfyui>-<variant>-r<hash>` inmutable · `<comfyui>` · `latest` (auto) · `stable` (manual, workflow **promote**).
-Variantes en `variants.json`: `cu130` (torch 2.14, driver ≥580, default) y `cu128` (torch 2.11, compat).
-
-## Promover una imagen (`stable`) y conservar una (`keep-*`)
-
-`build` publica cada imagen nueva automáticamente, pero `latest` solo garantiza que compila y pasa el smoke test **en CPU**. Los problemas que solo aparecen con GPU (falta de memoria, drivers, kernels de CUDA, un render que cambia) no se detectan ahí. Por eso los templates de producción deben usar **`stable`**, que solo avanza cuando el mantenedor promueve una imagen tras validarla en una GPU real:
-
-1. Busca el tag inmutable de la imagen nueva (p. ej. `0.37.2-cu130-r1a2b3c4d`) en el resumen del run de `build` (*Pin by digest*).
-2. Despliega ese tag exacto en RunPod (o en una GPU local) y haz una generación real.
-3. Si funciona, lanza el workflow `promote` con ese tag. Apunta `stable` y `stable-<variante>` a esa misma imagen, sin recompilar ni volver a subir nada:
-   ```bash
-   gh workflow run promote -R landygg/diffusion-runtime -f tag=0.37.2-cu130-r1a2b3c4d
-   ```
-   O desde *Actions → promote → Run workflow*.
-
-Si una imagen nueva falla en GPU, no la promuevas: `stable` sigue en la anterior. Para volver atrás, promueve otra vez un tag inmutable anterior. Hasta la primera promoción `stable` no existe; mientras tanto usa `latest` o un digest.
-
-**Conservar una imagen:** el workflow `retention` conserva las 5 imágenes inmutables más recientes por variante y borra las anteriores. Para conservar una imagen concreta para siempre (p. ej. el stack exacto con el que se produjo un proyecto), promuévela a un canal llamado `keep-<nombre>` en lugar de `stable`:
-
-```bash
-gh workflow run promote -R landygg/diffusion-runtime -f tag=0.37.2-cu130-r1a2b3c4d -f channel=keep-episode01
-```
-
-Los tags que empiezan por `latest`, `stable`, `keep-` o `buildcache-` nunca se borran (`retention.json`).
-
-## Uso
-
-```bash
-# RunPod: Container Image = ghcr.io/landygg/diffusion-runtime:stable, puerto 8188/http, Network Volume en /workspace
-docker run --gpus all -p 8188:8188 -v "$PWD/data:/workspace" \
-  -e COMFY_EXTRA_ARGS="--lowvram" ghcr.io/landygg/diffusion-runtime:stable
-```
-
-En pipelines reproducibles, fija la imagen por digest (`ghcr.io/landygg/diffusion-runtime@sha256:…`) y no por un tag móvil.
-
-| Variable | Default | Efecto |
+| Tag | Cuándo cambia | Para qué usarlo |
 |---|---|---|
-| `COMFY_DATA_DIR` | `/workspace` | Raíz del volumen |
-| `COMFY_PORT` | `8188` | Puerto |
-| `COMFY_EXTRA_ARGS` | — | Flags extra (`--lowvram`, `--highvram`, …) |
-| `COMFY_ENABLE_MANAGER` | `0` | `1` añade `--enable-manager` |
-| `COMFY_ALLOW_VOLUME_NODES` | `0` | `1` carga también `custom_nodes/` del volumen (no reproducible) |
-| `COMFY_CORS_ORIGIN` | RunPod: `https://<pod>-<puerto>.proxy.runpod.net`; si no, desactivado | Valor de `--enable-cors-header` (`*` = cualquier origen, `off` = desactivado) |
-| `COMFY_KEEPALIVE_ON_CRASH` | RunPod: `1`; si no, `0` | `1` mantiene vivo el contenedor si ComfyUI se cae, para depurar |
-| `PUBLIC_KEY` | — | Arranca sshd con login de root solo por clave (las host keys persisten en `/workspace/.ssh-host-keys`) |
-| `COMFY_MODELS_SYNC` | RunPod: `background`; si no, `off` | Descarga `models.lock.yaml` al volumen al arrancar: `background`, `wait` (antes de arrancar ComfyUI) u `off` |
+| `stable`, `stable-<variante>` | A mano (workflow `promote`), tras un render en GPU | Templates de pod y el trabajo diario |
+| `latest`, `<comfyui>` (p. ej. `0.37.3`) | Solo, en cada build | Probar pronto una versión nueva de ComfyUI |
+| `<comfyui>-<variante>-r<hash>` (p. ej. `0.37.3-cu130-r82550d79`) | Nunca (inmutable) | Pipelines reproducibles; se conservan las 5 más recientes por variante |
+| `keep-<nombre>` | A mano | Una imagen que conservar para siempre (p. ej. el stack exacto con el que se produjo un episodio) |
+
+Para ejecuciones totalmente reproducibles, fija por digest: `ghcr.io/landygg/diffusion-runtime@sha256:…`. La [última release](https://github.com/landygg/diffusion-runtime/releases/latest) es siempre el `stable` actual, con su digest. Desde una shell:
+
+```bash
+docker buildx imagetools inspect ghcr.io/landygg/diffusion-runtime:stable
+```
+
+| Variante | torch | Driver NVIDIA del host | |
+|---|---|---|---|
+| `cu130` | 2.14 | ≥ 580 | Por defecto (`stable`, `latest`) |
+| `cu128` | 2.11 | 570–579 | Compatibilidad; sigue cubriendo Blackwell (sm_120) |
+
+## Configuración
+
+| Variable | Por defecto | Efecto |
+|---|---|---|
+| `COMFY_EXTRA_ARGS` | — | Flags extra de ComfyUI (`--lowvram`, `--highvram`, …) |
+| `COMFY_MODELS_SYNC` | RunPod: `background`; si no, `off` | Descarga `models.lock.yaml` al arrancar: `background`, `wait` (antes de arrancar ComfyUI) u `off` |
 | `COMFY_MODELS_GROUPS` | todos | Solo estos grupos de `models.lock.yaml` (p. ej. `z-image-turbo`) |
 | `HF_TOKEN` | — | Token de Hugging Face, para modelos gated o privados |
-| `HF_HOME` | `/workspace/.cache/huggingface` | Caché de Hugging Face y token de `hf auth login`, en el volumen |
+| `PUBLIC_KEY` | — | Arranca sshd con login de root solo por clave (RunPod lo rellena con las claves SSH de tu cuenta) |
+| `COMFY_ENABLE_MANAGER` | `0` | `1` añade `--enable-manager` |
+| `COMFY_CORS_ORIGIN` | RunPod: el origen del proxy del pod; si no, desactivado | Valor de `--enable-cors-header` (`*` = cualquier origen, `off` = desactivado) |
+| `COMFY_KEEPALIVE_ON_CRASH` | RunPod: `1`; si no, `0` | `1` mantiene vivo el contenedor si ComfyUI termina, para depurar |
+| `COMFY_ALLOW_VOLUME_NODES` | `0` | `1` carga también `custom_nodes/` del volumen (no reproducible) |
+| `COMFY_DATA_DIR` | `/workspace` | Raíz del volumen |
+| `COMFY_PORT` | `8188` | Puerto |
+| `HF_HOME` | `/workspace/.cache/huggingface` | Caché de Hugging Face y token de `hf auth login` |
 
-También puedes poner flags de ComfyUI en `/workspace/comfyui_args.txt` (se crea en el primer arranque y se lee en cada arranque), para cambiarlos sin redesplegar.
+Los flags de ComfyUI también pueden ir en `/workspace/comfyui_args.txt`. El archivo se crea en el primer arranque y se lee en cada arranque, así que los flags cambian con un reinicio en lugar de un redespliegue.
 
 ## Modelos
 
-La imagen no trae pesos. `models.lock.yaml` lista los que necesitan los workflows de Z-Image Turbo y Wan 2.2 TI2V 5B, fijados por commit del repo y sha256, y en RunPod se descargan a `/workspace/models/<carpeta>/` en segundo plano en cada arranque (solo lo que falta; en los arranques siguientes solo se comprueban tamaños). ComfyUI arranca enseguida: pulsa **R** en la interfaz (o recarga) cuando el log muestre `[models] ... ready`.
-
-Los botones *Download* del panel "Missing Models" de ComfyUI descargan en tu **navegador**, no en el pod. Desde una shell del pod usa en su lugar:
+Los botones *Download* del panel "Missing Models" de ComfyUI guardan el archivo en tu **navegador**, no en el pod. Desde una shell del pod (terminal web o SSH), usa en su lugar:
 
 ```bash
 get-model <ref> [carpeta]           # un modelo, al volumen
 sync-models [grupo ...] [--verify]  # todo models.lock.yaml (--verify vuelve a calcular hashes)
 ```
 
-`<ref>` es el enlace de Hugging Face del modelo (el 🔗 del panel "Missing Models"), `org/repo[@revision]/ruta/al/archivo` o un nombre de archivo que ya esté en `models.lock.yaml`. `carpeta` es una carpeta de modelos de ComfyUI (`loras`, `vae`, `diffusion_models`, …; también una subcarpeta como `loras/estilo` o una ruta absoluta) y se crea si no existe. Si se omite, se deduce de la ruta (`split_files/text_encoders/x.safetensors` → `text_encoders`).
+- `<ref>` es el enlace de Hugging Face del modelo (el 🔗 del panel "Missing Models"), `org/repo[@revision]/ruta/al/archivo` o un nombre de archivo que ya esté en `models.lock.yaml`.
+- `carpeta` es una carpeta de modelos de ComfyUI (`loras`, `vae`, `diffusion_models`, …), una subcarpeta como `loras/estilo` o una ruta absoluta. Se crea si no existe. Si se omite, se deduce de la ruta (`split_files/text_encoders/x.safetensors` → `text_encoders`).
 
 ```bash
 get-model https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/vae/ae.safetensors
 get-model some-org/some-lora/style.safetensors loras
 ```
 
-Las descargas se reanudan si se cortan, se verifican (tamaño + sha256) antes de aparecer en la carpeta de modelos y solo corre una a la vez. `get-model` termina imprimiendo una entrada de `models.lock.yaml` fijada al commit exacto: pégala en el repo para tener ese modelo en cada pod nuevo. Para modelos gated, acepta la licencia en huggingface.co y define `HF_TOKEN` (o ejecuta `hf auth login` una vez; el token queda en el volumen). También está disponible el CLI `hf`.
+Las descargas se reanudan si se cortan y solo corre una a la vez. Un archivo solo aparece en la carpeta de modelos cuando su tamaño y su sha256 coinciden. `get-model` termina imprimiendo una entrada de `models.lock.yaml` fijada al commit exacto: añádela al repo para tener ese modelo en cada pod nuevo. Para modelos gated, acepta la licencia en huggingface.co y define `HF_TOKEN` o ejecuta `hf auth login` una vez (el token queda en el volumen).
 
-### Template de RunPod
+## Cómo se publican las versiones
 
-| Ajuste | Valor |
-|---|---|
-| Container image | `ghcr.io/landygg/diffusion-runtime:stable` (o un digest) |
-| Expose HTTP ports | `8188` |
-| Expose TCP ports | `22` (solo si usas `PUBLIC_KEY`) |
-| Volume mount path | `/workspace` (recomendado Network Volume) |
-| Environment | `PUBLIC_KEY` (opcional); `COMFY_EXTRA_ARGS` (opcional); `COMFY_MODELS_GROUPS`, `HF_TOKEN` (opcional) |
+1. **build** corre cada 6 horas y con cada cambio en la receta. Calcula un tag a partir de la versión de ComfyUI y un hash de los archivos de la receta, construye solo los tags que aún no existen, pasa el smoke test en CPU y publica el tag inmutable más `latest`.
+2. **El mantenedor comprueba la imagen en una GPU**, porque una ejecución en CPU no detecta errores de memoria, problemas de driver o de kernels CUDA, ni un render que cambie.
+3. **promote** apunta `stable` y `stable-<variante>` a esa imagen, sin reconstruir ni volver a subir nada, y publica una GitHub Release para ella (versiones de ComfyUI y torch, digest y PRs desde la release anterior). La release de la variante por defecto queda marcada como *Latest*:
+   ```bash
+   gh workflow run promote -R landygg/diffusion-runtime -f tag=0.37.3-cu130-r82550d79
+   # o conservar una para siempre:
+   gh workflow run promote -R landygg/diffusion-runtime -f tag=0.37.3-cu130-r82550d79 -f channel=keep-episode01
+   ```
+4. **retention** corre cada semana. Conserva las 5 imágenes inmutables más recientes por variante y nunca borra `latest*`, `stable*`, `keep-*` ni `buildcache-*`.
 
-Detrás del proxy de RunPod, ComfyUI rechaza con 403 las llamadas a la API y al websocket si CORS no está activado (el host y el origen del proxy no coinciden). La imagen lo activa automáticamente para el origen del proxy del propio pod.
+Si una imagen falla en la GPU, simplemente no se promueve y `stable` se queda donde estaba. Para volver atrás, promueve otra vez un tag inmutable anterior; su release vuelve a ser *Latest*.
 
-## Archivos de política (todo se define en el repo)
+## Desarrollo
+
+Todo lo que contiene la imagen se define en estos archivos:
 
 | Archivo | Qué controla | Quién lo aplica |
 |---|---|---|
-| `nodes.lock.yaml` | Custom nodes, fijados por SHA | build (`install_nodes.py`) |
-| `models.lock.yaml` | Modelos a descargar al volumen, fijados por commit + sha256 | `sync-models` (al arrancar y a mano); se valida en el build |
-| `required_nodes.txt` | Nodos que necesitan los workflows consumidores; el build falla si falta uno | smoke test (`smoke.py`) |
-| `variants.json` | Variantes CUDA / torch / Python | build (matriz) |
+| `nodes.lock.yaml` | Custom nodes, fijados por commit | build (`install_nodes.py`) |
+| `models.lock.yaml` | Modelos que se descargan al volumen, fijados por commit + sha256 | `sync-models`; se valida en el build y en el smoke test |
+| `required_nodes.txt` | Tipos de nodo que necesitan los workflows | smoke test (`smoke.py`) |
+| `variants.json` | Variantes de CUDA / torch / Python | build (matriz) |
 | `renovate.json` | Qué dependencias se actualizan solas y cómo | Renovate (PRs semanales) |
-| `retention.json` | Cuántas imágenes conservar en GHCR | workflow `retention` (semanal) |
+| `retention.json` | Cuántas imágenes conservar en GHCR | workflow `retention` |
 
-## Añadir / actualizar un nodo
+**Añadir un custom node:** añádelo a `nodes.lock.yaml` (`repo`, `ref: main`, `commit` = `git ls-remote <repo> HEAD`) y sus `class_type` a `required_nodes.txt`, y abre un PR. Renovate propone después los bumps de commit. **Añadir un modelo:** pega en `models.lock.yaml` la entrada que imprime `get-model`. Ver [CONTRIBUTING.md](CONTRIBUTING.md) (en inglés).
 
-Añade una entrada a `nodes.lock.yaml` (`repo`, `ref: main`, `commit` = `git ls-remote <repo> HEAD`) y su `class_type` a `required_nodes.txt`. Abre un PR; al mergearlo cambia el hash de la receta y se genera una imagen nueva. A partir de ahí Renovate propone los bumps de SHA. Ver [CONTRIBUTING.md](CONTRIBUTING.md) (en inglés).
-
-## Build y smoke test local (Mac)
-
-Con la app `container` de Apple (o Docker, mismos flags):
+**Build y smoke test en local** en un Mac, con `container` de Apple (o Docker, mismos flags):
 
 ```bash
 container builder start --cpus 8 --memory 16g
@@ -125,15 +150,13 @@ container build --platform linux/amd64 -t runtime:dev .
 container run --rm --platform linux/amd64 --memory 8g --entrypoint python runtime:dev /opt/comfy/smoke.py
 ```
 
-El smoke arranca ComfyUI en CPU, verifica `torch`, `comfyui_manager`, que ningún nodo dé `IMPORT FAILED` y que `/object_info` tenga todo lo de `required_nodes.txt`.
+El smoke test arranca ComfyUI en CPU y comprueba que:
+- `torch` y `comfyui_manager` se importan;
+- ningún nodo reporta `IMPORT FAILED`;
+- `/object_info` lista todos los tipos de nodo de `required_nodes.txt`;
+- las herramientas de modelos funcionan y `models.lock.yaml` es válido;
+- hay un compilador de C, que Triton necesita en la GPU.
 
 ## Licencia
 
-MIT para este repositorio. Las imágenes agregan software de terceros con sus propias licencias (ComfyUI GPL-3.0, NVIDIA EULA…): ver [licenses/NOTICE.md](licenses/NOTICE.md).
-
-## Puesta en marcha (mantenedor)
-
-1. Tras el primer build: *Packages → diffusion-runtime → Package settings → Change visibility* → público (GitHub no ofrece API para esto).
-2. Instala la [GitHub App de Renovate](https://github.com/apps/renovate) y añádela como excepción (solo vía PR) en el ruleset `main: review`. La protección de ramas y los ajustes de Actions los gestiona el mantenedor fuera de este repo.
-3. Valida cada imagen nueva en una GPU real y promuévela (ver *Promover una imagen*).
-4. Lanza el workflow `retention` en dry run para revisar qué borraría.
+Este repositorio es [MIT](LICENSE). Las imágenes incluyen software de terceros con sus propias licencias (ComfyUI GPL-3.0, NVIDIA SDK EULA, …); [licenses/NOTICE.md](licenses/NOTICE.md) las lista e indica dónde está el código fuente correspondiente.

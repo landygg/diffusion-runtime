@@ -17,6 +17,13 @@ Contributions are welcome: new custom nodes, CUDA variants, smoke-test improveme
 - Don't use third-party trademarks (e.g. "Comfy") in file, image or project names.
 - Test locally before opening the PR (Docker or Apple `container`); see the README.
 
+## Maintainers
+
+1. After the first build: *Packages → diffusion-runtime → Package settings → Change visibility* → public (GitHub has no API for this).
+2. Install the [Renovate GitHub App](https://github.com/apps/renovate), then add it as a bypass actor (via PR only) on the `main: review` ruleset. Branch protection and Actions settings are managed outside this repo.
+3. Validate each new image on a real GPU and promote it (see *How releases work* in the README).
+4. Run the `retention` workflow as a dry run to review what it would delete.
+
 ## License of contributions
 
 By contributing, you agree that your contribution is published under this repository's MIT license (inbound = outbound). Don't add third-party code under incompatible licenses.
