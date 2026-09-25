@@ -92,4 +92,6 @@ EXPOSE 8188 22
 WORKDIR /opt/ComfyUI
 HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 \
     CMD curl -fsS "http://127.0.0.1:${COMFY_PORT}/system_stats" > /dev/null || exit 1
-ENTRYPOINT ["/usr/bin/tini", "--", "/opt/comfy/start.sh"]
+# -s: RunPod runs its own init as PID 1, so tini registers as a subreaper to
+# still reap zombies (a no-op when tini is PID 1).
+ENTRYPOINT ["/usr/bin/tini", "-s", "--", "/opt/comfy/start.sh"]

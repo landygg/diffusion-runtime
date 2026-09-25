@@ -16,15 +16,27 @@ mkdir -p "$DATA"/{models,input,output,user,temp,custom_nodes}
 log() { echo "[start] $*"; }
 
 # --- sshd (only when PUBLIC_KEY is set) --------------------------------------
-# Key-only root login. Host keys live on the volume so the fingerprint survives
-# pod restarts instead of triggering "host key changed" warnings.
+# Key-only root login. Host keys are persisted on the volume so the fingerprint
+# survives pod restarts instead of triggering "host key changed" warnings, but
+# sshd reads them from a local copy: RunPod volumes can refuse chmod, and sshd
+# rejects private host keys that aren't 0600.
 start_sshd() {
-  [[ -n "${PUBLIC_KEY:-}" ]] || return 0
-  local keys="$DATA/.ssh-host-keys"
+  # RunPod passes the literal string "null" when the account has no SSH key.
+  [[ -n "${PUBLIC_KEY:-}" && "$PUBLIC_KEY" != "null" ]] || return 0
+  local store="$DATA/.ssh-host-keys" keys=/etc/ssh/runtime-host-keys
   mkdir -p "$keys" /root/.ssh /run/sshd
   chmod 700 "$keys" /root/.ssh
+  mkdir -p "$store" 2>/dev/null || true
   for type in ed25519 rsa; do
-    [[ -f "$keys/ssh_host_${type}_key" ]] || ssh-keygen -q -t "$type" -N "" -f "$keys/ssh_host_${type}_key"
+    local key="ssh_host_${type}_key"
+    if [[ -f "$store/$key" && -f "$store/$key.pub" ]]; then
+      cp "$store/$key" "$store/$key.pub" "$keys/"
+    else
+      ssh-keygen -q -t "$type" -N "" -f "$keys/$key"
+      cp "$keys/$key" "$keys/$key.pub" "$store/" 2>/dev/null \
+        || log "WARNING: could not persist SSH host keys to $store"
+    fi
+    chmod 600 "$keys/$key"
   done
   cat > /etc/ssh/sshd_config.d/runtime.conf <<CONF
 HostKey $keys/ssh_host_ed25519_key
@@ -39,7 +51,7 @@ CONF
   # env; sshd applies ~/.ssh/environment to every session.
   printenv | grep -E '^(PATH|VIRTUAL_ENV|COMFY_|RUNPOD_|NVIDIA_)' > /root/.ssh/environment
   chmod 600 /root/.ssh/authorized_keys /root/.ssh/environment
-  /usr/sbin/sshd && log "sshd started (key auth only)"
+  if /usr/sbin/sshd; then log "sshd started (key auth only)"; else log "WARNING: sshd failed to start"; fi
 }
 
 # --- ComfyUI arguments --------------------------------------------------------
@@ -91,7 +103,8 @@ done < <(grep -v '^[[:space:]]*#' "$ARGS_FILE" | tr -s '[:space:]' '\n')
 # shellcheck disable=SC2206  # word splitting of COMFY_EXTRA_ARGS is intended
 args+=(${COMFY_EXTRA_ARGS:-} "$@")
 
-start_sshd
+# SSH is a convenience: a failure here must never keep ComfyUI from starting.
+start_sshd || log "WARNING: SSH setup failed; continuing without SSH"
 
 # --- Run ComfyUI --------------------------------------------------------------
 log "ComfyUI $(grep -m1 -oE '[0-9]+\.[0-9]+\.[0-9]+' "$COMFY_HOME/comfyui_version.py" 2>/dev/null || echo '?') data=$DATA"
