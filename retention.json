@@ -1,0 +1,9 @@
+{
+  "package": "diffusion-runtime",
+  "keep_per_variant": 5,
+  "protect_tags": ["^latest", "^stable", "^keep-", "^buildcache-"],
+  "immutable_tag": "^(?P<ver>\\d+\\.\\d+\\.\\d+)-(?P<variant>cu\\d+)-r[0-9a-f]{8}$",
+  "candidate_prefix": "candidate-",
+  "failed_candidate_max_age_days": 2,
+  "untagged_max_age_days": 7
+}

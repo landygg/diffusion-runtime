@@ -1,0 +1,11 @@
+# Explicit excludes (not "*" + "!" allow-list: Apple's container builder
+# rejects that pattern with "changes out of order").
+.git
+.github
+docs
+*.md
+renovate.json
+retention.json
+variants.json
+scripts/ghcr_retention.py
+scripts/apply_repo_settings.sh

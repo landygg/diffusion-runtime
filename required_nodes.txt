@@ -1,0 +1,21 @@
+# Node class_types the downstream workflows depend on. The smoke test fails if any
+# is missing from /object_info — catches upstream renames before RunPod does.
+
+# Z-Image Turbo
+UNETLoader
+CLIPLoader
+VAELoader
+CLIPTextEncode
+ConditioningZeroOut
+EmptySD3LatentImage
+ModelSamplingAuraFlow
+KSampler
+VAEDecode
+SaveImage
+
+# Wan 2.2 TI2V 5B
+Wan22ImageToVideoLatent
+ModelSamplingSD3
+VAEDecodeTiled
+CreateVideo
+SaveVideo

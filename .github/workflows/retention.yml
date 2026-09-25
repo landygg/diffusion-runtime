@@ -1,0 +1,30 @@
+# Enforces retention.json on ghcr.io/<owner>/diffusion-runtime. Weekly run applies it;
+# a manual run defaults to dry run so the policy can be previewed first.
+name: retention
+
+on:
+  schedule:
+    - cron: "41 4 * * 0"
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "Actually delete (otherwise dry run)"
+        type: boolean
+        default: false
+
+permissions: {}   # granted per job
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+          OWNER_TYPE: ${{ github.event.repository.owner.type }}
+          APPLY: ${{ github.event_name == 'schedule' || inputs.apply }}
+        run: python3 scripts/ghcr_retention.py $([[ "$APPLY" == "true" ]] && echo --apply)
