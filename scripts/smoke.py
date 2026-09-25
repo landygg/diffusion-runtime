@@ -3,10 +3,13 @@
 1. torch and ComfyUI-Manager import.
 2. ComfyUI boots with --cpu --enable-manager and every custom node imports (no "IMPORT FAILED").
 3. /object_info exposes every class_type listed in required_nodes.txt.
+4. get-model / sync-models are on PATH and models.lock.yaml is valid (offline).
+5. A C compiler exists: Triton needs one on the GPU, which this CPU run never exercises.
 """
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -36,6 +39,28 @@ def check_imports() -> None:
     print("comfyui_manager ok")
 
 
+def check_model_tools() -> None:
+    for cmd in (["get-model", "--help"], ["sync-models", "--help"], [sys.executable, "/opt/comfy/models.py", "check"]):
+        r = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        if r.returncode != 0:
+            fail(f"{' '.join(cmd)} failed: {r.stderr or r.stdout}")
+    print("model tools ok")
+
+
+def check_c_compiler() -> None:
+    # Triton builds its CUDA driver helper with cc/gcc at first use; torch routes
+    # some eager ops through Triton, so a missing compiler breaks GPU runs only.
+    cc = os.environ.get("CC") or shutil.which("cc") or shutil.which("gcc")
+    if not cc:
+        fail("no C compiler (cc/gcc): Triton kernels would fail on the GPU")
+    r = subprocess.run([cc, "-x", "c", "-shared", "-fPIC", "-o", "/tmp/smoke_cc.so", "-"],
+                       input="#include <stdlib.h>\nint f(void) { return 0; }\n",
+                       capture_output=True, text=True, check=False)
+    if r.returncode != 0:
+        fail(f"C compiler cannot build a shared object: {r.stderr}")
+    print(f"c compiler ok ({cc})")
+
+
 def object_info() -> dict:
     with urllib.request.urlopen(f"http://127.0.0.1:{PORT}/object_info", timeout=10) as r:
         return json.load(r)
@@ -43,6 +68,8 @@ def object_info() -> dict:
 
 def main() -> None:
     check_imports()
+    check_model_tools()
+    check_c_compiler()
     required = [
         line.strip()
         for line in REQUIRED.read_text().splitlines()

@@ -12,7 +12,7 @@ GPUs with the NVIDIA Container Toolkit.
 
 | Image | Volume (`$COMFY_DATA_DIR`, default `/workspace`) |
 |---|---|
-| ComfyUI (pinned tag), torch + CUDA (wheels), ffmpeg, ComfyUI-Manager (`manager_requirements.txt`), custom nodes from `nodes.lock.yaml` (currently empty: Wan 2.2 and Z-Image use core nodes) | `models/`, `input/`, `output/`, `user/` (workflows, settings), `temp/`, `custom_nodes/` (opt-in) |
+| ComfyUI (pinned tag), torch + CUDA (wheels), ffmpeg, ComfyUI-Manager (`manager_requirements.txt`), custom nodes from `nodes.lock.yaml` (currently empty: Wan 2.2 and Z-Image use core nodes), `get-model` / `sync-models` + the model list `models.lock.yaml` (no weights) | `models/` (downloaded by `sync-models`), `input/`, `output/`, `user/` (workflows, settings), `temp/`, `custom_nodes/` (opt-in) |
 
 ## Tags
 
@@ -61,8 +61,32 @@ For reproducible pipelines, pin by digest (`ghcr.io/landygg/diffusion-runtime@sh
 | `COMFY_CORS_ORIGIN` | RunPod: `https://<pod>-<port>.proxy.runpod.net`; else off | Value for `--enable-cors-header` (`*` = any origin, `off` = disabled) |
 | `COMFY_KEEPALIVE_ON_CRASH` | RunPod: `1`; else `0` | `1` keeps the container alive if ComfyUI exits, for debugging |
 | `PUBLIC_KEY` | — | Starts sshd with key-only root login (host keys persist in `/workspace/.ssh-host-keys`) |
+| `COMFY_MODELS_SYNC` | RunPod: `background`; else `off` | Download `models.lock.yaml` to the volume at start: `background`, `wait` (before ComfyUI starts) or `off` |
+| `COMFY_MODELS_GROUPS` | all | Only these groups from `models.lock.yaml` (e.g. `z-image-turbo`) |
+| `HF_TOKEN` | — | Hugging Face token, for gated or private models |
+| `HF_HOME` | `/workspace/.cache/huggingface` | Hugging Face cache and `hf auth login` token, on the volume |
 
 Extra ComfyUI flags can also go in `/workspace/comfyui_args.txt` (created on first start, read at every start), so they change without redeploying.
+
+## Models
+
+The image ships no weights. `models.lock.yaml` lists the ones the Z-Image Turbo and Wan 2.2 TI2V 5B workflows need, pinned by repo commit and sha256, and on RunPod they are downloaded to `/workspace/models/<folder>/` in the background at every start (only what is missing; later starts just check sizes). ComfyUI starts right away: press **R** in the UI (or reload) once the log shows `[models] ... ready`.
+
+The *Download* buttons in ComfyUI's "Missing Models" panel save to your **browser**, not to the pod. From a pod shell, use instead:
+
+```bash
+get-model <ref> [folder]            # one model, onto the volume
+sync-models [group ...] [--verify]  # everything in models.lock.yaml (--verify re-hashes)
+```
+
+`<ref>` is the model's Hugging Face link (the 🔗 in the "Missing Models" panel), `org/repo[@revision]/path/to/file`, or a file name already in `models.lock.yaml`. `folder` is a ComfyUI model folder (`loras`, `vae`, `diffusion_models`, …; a subfolder like `loras/style` or an absolute path also work) and is created if missing. When omitted it is taken from the path (`split_files/text_encoders/x.safetensors` → `text_encoders`).
+
+```bash
+get-model https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/vae/ae.safetensors
+get-model some-org/some-lora/style.safetensors loras
+```
+
+Downloads resume if interrupted, are verified (size + sha256) before they appear in the models folder, and only one runs at a time. `get-model` ends by printing a `models.lock.yaml` entry pinned to the exact commit: paste it into the repo to get that model on every new pod. For gated models, accept the license on huggingface.co and set `HF_TOKEN` (or run `hf auth login` once; the token is kept on the volume). The `hf` CLI is also available.
 
 ### RunPod template
 
@@ -72,7 +96,7 @@ Extra ComfyUI flags can also go in `/workspace/comfyui_args.txt` (created on fir
 | Expose HTTP ports | `8188` |
 | Expose TCP ports | `22` (only if you use `PUBLIC_KEY`) |
 | Volume mount path | `/workspace` (Network Volume recommended) |
-| Environment | `PUBLIC_KEY` (optional); `COMFY_EXTRA_ARGS` (optional) |
+| Environment | `PUBLIC_KEY` (optional); `COMFY_EXTRA_ARGS` (optional); `COMFY_MODELS_GROUPS`, `HF_TOKEN` (optional) |
 
 Behind RunPod's proxy, ComfyUI rejects API and websocket calls with 403 unless CORS is enabled (the proxy's host and origin differ). The image enables it automatically for the pod's own proxy origin.
 
@@ -81,6 +105,7 @@ Behind RunPod's proxy, ComfyUI rejects API and websocket calls with 403 unless C
 | File | Controls | Enforced by |
 |---|---|---|
 | `nodes.lock.yaml` | Custom nodes, pinned by SHA | build (`install_nodes.py`) |
+| `models.lock.yaml` | Models to download to the volume, pinned by commit + sha256 | `sync-models` (at start and by hand); validated at build |
 | `required_nodes.txt` | Node types downstream workflows need; the build fails if one is missing | smoke test (`smoke.py`) |
 | `variants.json` | CUDA / torch / Python variants | build (matrix) |
 | `renovate.json` | Which dependencies update automatically, and how | Renovate (weekly PRs) |

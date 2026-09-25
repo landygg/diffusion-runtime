@@ -3,7 +3,7 @@
 # ComfyUI runtime image. Layers are ordered from least- to most-frequently
 # changing so a new ComfyUI release only rebuilds the last few layers:
 #
-#   OS deps -> torch (pinned) -> ComfyUI requirements -> ComfyUI source -> custom nodes -> entrypoint
+#   OS deps -> torch (pinned) -> ComfyUI requirements -> ComfyUI source -> custom nodes -> model tools -> entrypoint
 #
 # No CUDA base image: the torch wheels from download.pytorch.org ship the CUDA
 # runtime as nvidia-* pip packages. The host only needs the NVIDIA driver and
@@ -26,15 +26,19 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PATH=/opt/venv/bin:$PATH \
     COMFY_HOME=/opt/ComfyUI \
     COMFY_DATA_DIR=/workspace \
-    COMFY_PORT=8188
+    COMFY_PORT=8188 \
+    HF_HOME=/workspace/.cache/huggingface
 
 # 1. OS packages. ffmpeg CLI is used by video nodes (VideoHelperSuite);
 #    libgl/libglib are needed by opencv-based nodes; openssh-server backs the
-#    optional SSH access (started only when PUBLIC_KEY is set). The packaged
+#    optional SSH access (started only when PUBLIC_KEY is set). gcc + libc6-dev:
+#    Triton compiles a small C module for its CUDA driver on first use, and
+#    torch 2.14 routes some eager ops (e.g. bmm_outer_product) through Triton,
+#    so without a C compiler plain text encoding fails on the GPU. The packaged
 #    host keys are removed so no two containers share them; start.sh creates
 #    per-volume keys.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        git ffmpeg libgl1 libglib2.0-0 ca-certificates curl tini openssh-server \
+        git ffmpeg libgl1 libglib2.0-0 ca-certificates curl tini openssh-server gcc libc6-dev \
     && rm -rf /var/lib/apt/lists/* /etc/ssh/ssh_host_*
 
 # COPY --from does not expand ARGs; bump this tag by hand.
@@ -57,6 +61,7 @@ RUN git clone --depth 1 --branch "${COMFYUI_REF}" "${COMFYUI_REPO}" "$COMFY_HOME
     && uv pip install -c /opt/constraints.txt -r "$COMFY_HOME/requirements.txt" \
     && test -f "$COMFY_HOME/manager_requirements.txt" \
     && uv pip install -c /opt/constraints.txt -r "$COMFY_HOME/manager_requirements.txt" \
+    && uv pip install -c /opt/constraints.txt "huggingface_hub[hf_xet]" \
     && rm -rf "$COMFY_HOME/.git"
 
 # 4. Custom nodes, pinned by commit in nodes.lock.yaml (changes here bump the recipe hash).
@@ -65,7 +70,16 @@ COPY scripts/install_nodes.py /opt/comfy/install_nodes.py
 RUN python /opt/comfy/install_nodes.py /opt/comfy/nodes.lock.yaml "$COMFY_HOME/custom_nodes" \
     && uv pip freeze > /opt/comfy/pip-freeze.txt
 
-# 5. Entrypoint + smoke test (run with: --entrypoint python ... /opt/comfy/smoke.py).
+# 5. Model downloader: models.lock.yaml is only the list of what to fetch onto
+#    the volume (no weights in the image). get-model / sync-models dispatch on argv[0].
+COPY models.lock.yaml /opt/comfy/models.lock.yaml
+COPY scripts/models.py /opt/comfy/models.py
+RUN chmod +x /opt/comfy/models.py \
+    && ln -s /opt/comfy/models.py /usr/local/bin/get-model \
+    && ln -s /opt/comfy/models.py /usr/local/bin/sync-models \
+    && python /opt/comfy/models.py check
+
+# 6. Entrypoint + smoke test (run with: --entrypoint python ... /opt/comfy/smoke.py).
 COPY docker/start.sh /opt/comfy/start.sh
 COPY scripts/smoke.py required_nodes.txt /opt/comfy/
 COPY licenses/NOTICE.md /opt/comfy/licenses/NOTICE.md
