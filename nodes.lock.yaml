@@ -1,0 +1,15 @@
+# Custom nodes baked into the image. Pin by full commit SHA — never a branch.
+# Changing this file changes the recipe hash => a new image tag.
+#
+# Fields: name (dir under custom_nodes), repo, ref (branch Renovate tracks), commit,
+#         optional: pip: [extra packages], skip_requirements: true, run_install_py: true
+#
+# Empty on purpose: the Wan 2.2 TI2V and Z-Image Turbo workflows use only
+# ComfyUI core nodes (verified against v0.37.2; see required_nodes.txt).
+# Example entry:
+#
+#  - name: ComfyUI-VideoHelperSuite
+#    repo: https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git
+#    ref: main
+#    commit: 4d907bee61e92c2e65af3bd6383a4e4d356126d1
+nodes: []

@@ -1,0 +1,85 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":dependencyDashboard",
+    "helpers:pinGitHubActionDigests"
+  ],
+  "timezone": "Europe/Madrid",
+  "schedule": [
+    "before 7am on monday"
+  ],
+  "prConcurrentLimit": 5,
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Custom nodes pinned by commit: follow `ref` and bump `commit`",
+      "managerFilePatterns": [
+        "/^nodes\\.lock\\.yaml$/"
+      ],
+      "matchStrings": [
+        "repo:\\s*(?<depName>\\S+)\\s+ref:\\s*(?<currentValue>\\S+)\\s+commit:\\s*(?<currentDigest>[0-9a-f]{40})"
+      ],
+      "datasourceTemplate": "git-refs"
+    },
+    {
+      "customType": "regex",
+      "description": "torch per CUDA variant, resolved against that variant's wheel index (cu128 tops out where PyTorch stops publishing it)",
+      "managerFilePatterns": [
+        "/^variants\\.json$/"
+      ],
+      "matchStrings": [
+        "\"torch\":\\s*\"(?<currentValue>[^\"]+)\",\\s*\"index\":\\s*\"(?<registryUrl>[^\"]+)\""
+      ],
+      "depNameTemplate": "torch",
+      "datasourceTemplate": "pypi",
+      "versioningTemplate": "pep440"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "One PR per week for all node bumps",
+      "matchManagers": [
+        "custom.regex"
+      ],
+      "matchDatasources": [
+        "git-refs"
+      ],
+      "groupName": "custom nodes"
+    },
+    {
+      "description": "torch majors/minors can change outputs for a fixed seed: never automerge",
+      "matchPackageNames": [
+        "torch"
+      ],
+      "automerge": false,
+      "labels": [
+        "torch"
+      ]
+    },
+    {
+      "description": "Keep the base image on Python 3.12 (custom-node wheel compatibility)",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "python"
+      ],
+      "allowedVersions": "<3.13"
+    },
+    {
+      "description": "Tooling (uv, GitHub Actions) is low risk: automerge once CI is green",
+      "matchPackageNames": [
+        "ghcr.io/astral-sh/uv",
+        "actions/**",
+        "docker/**"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "digest"
+      ],
+      "automerge": true
+    }
+  ]
+}
