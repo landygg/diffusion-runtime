@@ -1,7 +1,7 @@
-## Qué cambia y por qué
+## What changes and why
 
 ## Checklist
-- [ ] Nodos nuevos fijados por SHA completo en `nodes.lock.yaml` y sus `class_type` en `required_nodes.txt`
-- [ ] Sin modelos ni datos en la imagen
-- [ ] Smoke test local OK (`python /opt/comfy/smoke.py` dentro de la imagen) o explica por qué no
-- [ ] Si cambia torch/CUDA: impacto en reproducibilidad explicado
+- [ ] New nodes pinned by full SHA in `nodes.lock.yaml`, with their `class_type` values in `required_nodes.txt`
+- [ ] No models or data in the image
+- [ ] Local smoke test passes (`python /opt/comfy/smoke.py` inside the image), or explain why not
+- [ ] If torch/CUDA changes: impact on reproducibility explained
