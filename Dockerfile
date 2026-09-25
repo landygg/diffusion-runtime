@@ -31,11 +31,14 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 # 1. OS packages. ffmpeg CLI is used by video nodes (VideoHelperSuite);
 #    libgl/libglib are needed by opencv-based nodes; openssh-server backs the
-#    optional SSH access (started only when PUBLIC_KEY is set). The packaged
+#    optional SSH access (started only when PUBLIC_KEY is set). gcc + libc6-dev:
+#    Triton compiles a small C module for its CUDA driver on first use, and
+#    torch 2.14 routes some eager ops (e.g. bmm_outer_product) through Triton,
+#    so without a C compiler plain text encoding fails on the GPU. The packaged
 #    host keys are removed so no two containers share them; start.sh creates
 #    per-volume keys.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        git ffmpeg libgl1 libglib2.0-0 ca-certificates curl tini openssh-server \
+        git ffmpeg libgl1 libglib2.0-0 ca-certificates curl tini openssh-server gcc libc6-dev \
     && rm -rf /var/lib/apt/lists/* /etc/ssh/ssh_host_*
 
 # COPY --from does not expand ARGs; bump this tag by hand.
