@@ -1,4 +1,4 @@
-# diffusion-runtime
+# <img src="docs/logo.svg" alt="" width="36" height="36" align="top"> diffusion-runtime
 
 [![stable](https://img.shields.io/github/v/release/landygg/diffusion-runtime?label=stable&sort=date)](https://github.com/landygg/diffusion-runtime/releases/latest)
 [![build](https://github.com/landygg/diffusion-runtime/actions/workflows/build.yml/badge.svg)](https://github.com/landygg/diffusion-runtime/actions/workflows/build.yml)
@@ -40,7 +40,7 @@ Luego abre http://localhost:8188. En GPUs pequeñas añade `-e COMFY_EXTRA_ARGS=
 
 ## Características
 
-- **Sigue las versiones de ComfyUI.** Un tag nuevo upstream dispara un build en unas 6 horas como máximo. Cada imagen pasa un smoke test en CPU antes de publicarse.
+- **Sigue las versiones de ComfyUI.** El build busca un tag nuevo de ComfyUI cada 6 horas y lo construye solo. Cada imagen pasa un smoke test en CPU antes de publicarse.
 - **Un canal `stable` comprobado en GPU.** `latest` avanza solo; `stable` solo avanza cuando el mantenedor promueve una imagen tras un render real en GPU.
 - **Todo fijado.** El tag de ComfyUI, los wheels de torch/CUDA, los custom nodes (por commit) y los modelos (por commit de Hugging Face + sha256) se definen en este repo.
 - **Modelos en el volumen, no en la imagen.** `sync-models` descarga el conjunto fijado; `get-model` añade cualquier modelo de Hugging Face desde una shell del pod.
