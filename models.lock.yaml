@@ -8,7 +8,9 @@
 #         file (path inside the repo), folder (ComfyUI model folder),
 #         sha256 + size (from the Hub's LFS metadata), optional: name (rename on disk)
 #
-# Upstream licenses: Z-Image Turbo and Wan 2.2 are Apache-2.0 (see each repo).
+# Upstream licenses: Z-Image Turbo, Wan 2.2 and FLUX.2 [klein] 4B are Apache-2.0
+# (see each repo). The FLUX.2 VAE is taken from Comfy-Org/flux2-dev, whose Hub
+# license field reads "other": check that repo before redistributing it.
 models:
   # Z-Image Turbo (text-to-image)
   - group: z-image-turbo
@@ -55,3 +57,28 @@ models:
     folder: vae
     sha256: e40321bd36b9709991dae2530eb4ac303dd168276980d3e9bc4b6e2b75fed156
     size: 1409400960
+
+  # FLUX.2 [klein] 4B distilled fp8 (reference-conditioned text-to-image). The
+  # text encoder is the fp8 Qwen3 4B from the Z-Image Turbo repo, loaded with
+  # CLIPLoader type=flux2.
+  - group: flux2-klein-4b
+    repo: black-forest-labs/FLUX.2-klein-4b-fp8
+    revision: 5b4408e59397a4a37ccb46afe426d8ed86379441
+    file: flux-2-klein-4b-fp8.safetensors
+    folder: diffusion_models
+    sha256: 97ed34fe0567e436200f2faee3939b88f2b5d99f8af2a4dc16532c4245c0ccb6
+    size: 4070624520
+  - group: flux2-klein-4b
+    repo: Comfy-Org/flux2-dev
+    revision: ed33133cd56476eac818c0943b6f9419b3e4a3a1
+    file: split_files/vae/flux2-vae.safetensors
+    folder: vae
+    sha256: d64f3a68e1cc4f9f4e29b6e0da38a0204fe9a49f2d4053f0ec1fa1ca02f9c4b5
+    size: 336213556
+  - group: flux2-klein-4b
+    repo: Comfy-Org/z_image_turbo
+    revision: 6fc90a3b1b653e935a0d175e260736de25b84df5
+    file: split_files/text_encoders/qwen_3_4b_fp8_mixed.safetensors
+    folder: text_encoders
+    sha256: 72450b19758172c5a7273cf7de729d1c17e7f434a104a00167624cba94f68f15
+    size: 5631994051
