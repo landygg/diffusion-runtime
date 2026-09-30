@@ -19,3 +19,28 @@ ModelSamplingSD3
 VAEDecodeTiled
 CreateVideo
 SaveVideo
+
+# FLUX.2 klein 4B (reference-conditioned keyframes). The full set the workflow
+# uses, including loaders already listed above. Reference strength is built from
+# ConditioningSetTimestepRange + ConditioningCombine, so no custom node is needed.
+UNETLoader
+CLIPLoader
+VAELoader
+CLIPTextEncode
+ConditioningZeroOut
+PrimitiveInt
+PrimitiveFloat
+LoadImage
+ImageScaleToTotalPixels
+VAEEncode
+ReferenceLatent
+ConditioningSetTimestepRange
+ConditioningCombine
+EmptyFlux2LatentImage
+Flux2Scheduler
+KSamplerSelect
+RandomNoise
+CFGGuider
+SamplerCustomAdvanced
+VAEDecode
+SaveImage
