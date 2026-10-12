@@ -10,6 +10,12 @@ removes every tag on it. So decisions are per version:
   immutable <ver>-<variant>-r<hash> tag                   -> keep newest N per variant
   anything else                                           -> keep (unknown = safe)
 
+Then, whatever the rule said, a version whose digest is referenced by a kept
+version's index is kept too. The published tags are indexes created by
+`imagetools create` over the candidate's manifest, so that manifest keeps only
+its candidate-* tag (or none) while every published tag depends on it; deleting
+it leaves the tags listed but unpullable (404 on the platform manifest).
+
 Dry run by default; pass --apply to delete.
 
 Env: GITHUB_TOKEN, OWNER, OWNER_TYPE ("User" | "Organization").
@@ -18,12 +24,14 @@ Env: GITHUB_TOKEN, OWNER, OWNER_TYPE ("User" | "Organization").
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import re
 import sys
 import urllib.request
 from collections import defaultdict
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -39,6 +47,32 @@ def request(method: str, url: str) -> list | dict | None:
     with urllib.request.urlopen(req) as r:
         body = r.read()
     return json.loads(body) if body else None
+
+
+REGISTRY = "https://ghcr.io"
+MANIFEST_TYPES = ",".join([
+    "application/vnd.oci.image.index.v1+json",
+    "application/vnd.docker.distribution.manifest.list.v2+json",
+    "application/vnd.oci.image.manifest.v1+json",
+    "application/vnd.docker.distribution.manifest.v2+json",
+])
+
+
+def registry_token(repo: str) -> str:
+    basic = base64.b64encode(f"{os.environ['OWNER']}:{os.environ['GITHUB_TOKEN']}".encode()).decode()
+    req = urllib.request.Request(f"{REGISTRY}/token?service=ghcr.io&scope=repository:{repo}:pull",
+                                 headers={"Authorization": f"Basic {basic}"})
+    with urllib.request.urlopen(req) as r:
+        return json.load(r)["token"]
+
+
+def manifest_children(repo: str, token: str, digest: str) -> list[str]:
+    """Digests listed by the manifest at `digest` (empty unless it is an index).
+    Any error propagates: better to abort the run than delete blind."""
+    req = urllib.request.Request(f"{REGISTRY}/v2/{repo}/manifests/{digest}", headers={
+        "Authorization": f"Bearer {token}", "Accept": MANIFEST_TYPES})
+    with urllib.request.urlopen(req) as r:
+        return [m["digest"] for m in json.load(r).get("manifests", [])]
 
 
 def base_url(package: str) -> str:
@@ -89,6 +123,26 @@ def plan(versions: list[dict], policy: dict, now: datetime) -> list[tuple[dict, 
     return deletions
 
 
+def spare_referenced(versions: list[dict], deletions: list[tuple[dict, str]],
+                     children: Callable[[str], list[str]]) -> list[tuple[dict, str]]:
+    """Drop from `deletions` every version reachable from a kept version's index.
+    Iterates to a fixpoint so a spared index also protects its own children."""
+    doomed = {v["id"]: (v, why) for v, why in deletions}
+    scanned: set[int] = set()
+    while True:
+        kept = [v for v in versions if v["id"] not in doomed and v["id"] not in scanned]
+        if not kept:
+            break
+        referenced: set[str] = set()
+        for v in kept:
+            scanned.add(v["id"])
+            referenced.update(children(v["name"]))
+        spared = [vid for vid, (v, _) in doomed.items() if v["name"] in referenced]
+        for vid in spared:
+            del doomed[vid]
+    return [d for d in deletions if d[0]["id"] in doomed]
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--policy", default="retention.json")
@@ -99,6 +153,10 @@ def main() -> None:
     url = base_url(policy["package"])
     versions = list_versions(url)
     deletions = plan(versions, policy, datetime.now(timezone.utc))
+    if deletions:
+        repo = f"{os.environ['OWNER'].lower()}/{policy['package']}"
+        token = registry_token(repo)
+        deletions = spare_referenced(versions, deletions, lambda d: manifest_children(repo, token, d))
 
     print(f"{len(versions)} versions, {len(deletions)} to delete ({'APPLY' if args.apply else 'dry run'})")
     for v, why in deletions:
