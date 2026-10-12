@@ -8,4 +8,5 @@ renovate.json
 retention.json
 variants.json
 scripts/ghcr_retention.py
+scripts/test_ghcr_retention.py
 scripts/apply_repo_settings.sh
